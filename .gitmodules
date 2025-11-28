@@ -1,0 +1,3 @@
+[submodule "libsecret"]
+	path = libsecret
+	url = https://gitlab.gnome.org/GNOME/libsecret.git
