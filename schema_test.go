@@ -598,3 +598,158 @@ func findSubstr(s, substr string) bool {
 	}
 	return false
 }
+
+// Tests for SchemaType and GetSchema
+
+func TestSchemaTypeString(t *testing.T) {
+	tests := []struct {
+		schemaType SchemaType
+		expected   string
+	}{
+		{SchemaTypeNote, "NOTE"},
+		{SchemaTypeCompatNetwork, "COMPAT_NETWORK"},
+		{SchemaType(999), "UNKNOWN(999)"},
+	}
+
+	for _, test := range tests {
+		if got := test.schemaType.String(); got != test.expected {
+			t.Errorf("SchemaType(%d).String() = %q, want %q", test.schemaType, got, test.expected)
+		}
+	}
+}
+
+func TestGetSchemaNote(t *testing.T) {
+	schema := GetSchema(SchemaTypeNote)
+	if schema == nil {
+		t.Fatal("GetSchema(SchemaTypeNote) returned nil")
+	}
+
+	// Schema should be borrowed (not freed)
+	if !schema.IsBorrowed() {
+		t.Error("GetSchema() should return a borrowed schema")
+	}
+
+	// Verify schema name
+	expectedName := "org.gnome.keyring.Note"
+	if schema.Name() != expectedName {
+		t.Errorf("schema.Name() = %q, want %q", schema.Name(), expectedName)
+	}
+
+	// Note schema has no attributes
+	attrs := schema.Attributes()
+	if len(attrs) != 0 {
+		t.Errorf("Note schema should have no attributes, got %d", len(attrs))
+	}
+
+	// Calling Unref should be safe but have no effect
+	schema.Unref()
+	// Schema should still be valid (borrowed, not freed)
+	if schema.Name() != expectedName {
+		t.Error("Unref() on borrowed schema should have no effect")
+	}
+}
+
+func TestGetSchemaCompatNetwork(t *testing.T) {
+	schema := GetSchema(SchemaTypeCompatNetwork)
+	if schema == nil {
+		t.Fatal("GetSchema(SchemaTypeCompatNetwork) returned nil")
+	}
+
+	// Schema should be borrowed (not freed)
+	if !schema.IsBorrowed() {
+		t.Error("GetSchema() should return a borrowed schema")
+	}
+
+	// Verify schema name
+	expectedName := "org.gnome.keyring.NetworkPassword"
+	if schema.Name() != expectedName {
+		t.Errorf("schema.Name() = %q, want %q", schema.Name(), expectedName)
+	}
+
+	// Verify network schema has the expected attributes
+	attrs := schema.Attributes()
+	expectedAttrs := map[string]SchemaAttributeType{
+		"user":     SchemaAttributeString,
+		"domain":   SchemaAttributeString,
+		"object":   SchemaAttributeString,
+		"protocol": SchemaAttributeString,
+		"port":     SchemaAttributeInteger,
+		"server":   SchemaAttributeString,
+		"authtype": SchemaAttributeString,
+	}
+
+	if len(attrs) != len(expectedAttrs) {
+		t.Errorf("CompatNetwork schema has %d attributes, want %d", len(attrs), len(expectedAttrs))
+	}
+
+	for name, expectedType := range expectedAttrs {
+		if actualType, ok := attrs[name]; !ok {
+			t.Errorf("CompatNetwork schema missing attribute %q", name)
+		} else if actualType != expectedType {
+			t.Errorf("CompatNetwork schema attribute %q type = %v, want %v", name, actualType, expectedType)
+		}
+	}
+}
+
+func TestSchemaNote(t *testing.T) {
+	schema := SchemaNote()
+	if schema == nil {
+		t.Fatal("SchemaNote() returned nil")
+	}
+
+	if !schema.IsBorrowed() {
+		t.Error("SchemaNote() should return a borrowed schema")
+	}
+
+	if schema.Name() != "org.gnome.keyring.Note" {
+		t.Errorf("SchemaNote().Name() = %q, want %q", schema.Name(), "org.gnome.keyring.Note")
+	}
+}
+
+func TestSchemaCompatNetwork(t *testing.T) {
+	schema := SchemaCompatNetwork()
+	if schema == nil {
+		t.Fatal("SchemaCompatNetwork() returned nil")
+	}
+
+	if !schema.IsBorrowed() {
+		t.Error("SchemaCompatNetwork() should return a borrowed schema")
+	}
+
+	if schema.Name() != "org.gnome.keyring.NetworkPassword" {
+		t.Errorf("SchemaCompatNetwork().Name() = %q, want %q", schema.Name(), "org.gnome.keyring.NetworkPassword")
+	}
+
+	// Verify it has the port attribute as integer
+	attrs := schema.Attributes()
+	if portType, ok := attrs["port"]; !ok {
+		t.Error("SchemaCompatNetwork() missing 'port' attribute")
+	} else if portType != SchemaAttributeInteger {
+		t.Errorf("SchemaCompatNetwork() 'port' attribute type = %v, want INTEGER", portType)
+	}
+}
+
+func TestBorrowedSchemaString(t *testing.T) {
+	schema := SchemaNote()
+	str := schema.String()
+
+	if !contains(str, "borrowed=true") {
+		t.Errorf("Borrowed schema String() should contain 'borrowed=true', got %q", str)
+	}
+}
+
+func TestNonBorrowedSchemaString(t *testing.T) {
+	schema, err := NewSchema("org.example.Test", SchemaFlagsNone, map[string]SchemaAttributeType{
+		"key": SchemaAttributeString,
+	})
+	if err != nil {
+		t.Fatalf("NewSchema() failed: %v", err)
+	}
+	defer schema.Unref()
+
+	str := schema.String()
+
+	if contains(str, "borrowed") {
+		t.Errorf("Non-borrowed schema String() should not contain 'borrowed', got %q", str)
+	}
+}

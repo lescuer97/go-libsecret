@@ -4,6 +4,9 @@ package golibsecret
 #cgo pkg-config: libsecret-1
 #include <libsecret/secret.h>
 #include <stdlib.h>
+
+// secret_get_schema is defined in secret-schemas.h which is included via secret.h
+// but we need to ensure the enum is available
 */
 import "C"
 import (
@@ -67,6 +70,49 @@ const (
 	SchemaFlagsDontMatchName SchemaFlags = C.SECRET_SCHEMA_DONT_MATCH_NAME
 )
 
+// SchemaType represents predefined schema types available through GetSchema.
+//
+// Mapped from C enum: SecretSchemaType
+type SchemaType int
+
+const (
+	// SchemaTypeNote is a predefined schema for personal passwords/notes stored
+	// by the user in the password manager. This schema has no attributes, and
+	// the items are not meant to be used automatically by applications.
+	//
+	// Schema name: "org.gnome.keyring.Note"
+	SchemaTypeNote SchemaType = C.SECRET_SCHEMA_TYPE_NOTE
+
+	// SchemaTypeCompatNetwork is a predefined schema compatible with items stored
+	// via the libgnome-keyring 'network password' functions. This is meant to be
+	// used by applications migrating from libgnome-keyring which stored their
+	// secrets as 'network passwords'. It is not recommended for new code.
+	//
+	// Schema name: "org.gnome.keyring.NetworkPassword"
+	//
+	// Attributes:
+	//   - user: The user name (string)
+	//   - domain: The login domain or realm (string)
+	//   - object: The object or path (string)
+	//   - protocol: The protocol (string like 'http')
+	//   - port: The network port (integer)
+	//   - server: The hostname or server (string)
+	//   - authtype: The authentication type (string)
+	SchemaTypeCompatNetwork SchemaType = C.SECRET_SCHEMA_TYPE_COMPAT_NETWORK
+)
+
+// String returns the string representation of SchemaType
+func (t SchemaType) String() string {
+	switch t {
+	case SchemaTypeNote:
+		return "NOTE"
+	case SchemaTypeCompatNetwork:
+		return "COMPAT_NETWORK"
+	default:
+		return fmt.Sprintf("UNKNOWN(%d)", t)
+	}
+}
+
 // String returns the string representation of SchemaFlags
 func (f SchemaFlags) String() string {
 	switch f {
@@ -90,6 +136,10 @@ func (f SchemaFlags) String() string {
 type Schema struct {
 	// cSchema is the underlying C SecretSchema pointer
 	cSchema *C.SecretSchema
+
+	// borrowed indicates if this schema is a predefined/static schema
+	// that should not be freed (e.g., from GetSchema)
+	borrowed bool
 }
 
 // NewSchema creates a new schema with the given name, flags, and attributes.
@@ -201,8 +251,11 @@ func (s *Schema) Ref() *Schema {
 
 // Unref decrements the reference count on the schema.
 // When the reference count reaches zero, the schema is freed.
+//
+// Note: Predefined schemas obtained via GetSchema() are static and
+// calling Unref() on them is a no-op.
 func (s *Schema) Unref() {
-	if s.cSchema != nil {
+	if s.cSchema != nil && !s.borrowed {
 		C.secret_schema_unref(s.cSchema)
 		s.cSchema = nil
 	}
@@ -214,11 +267,100 @@ func (s *Schema) free() {
 	s.cSchema = nil
 }
 
+// IsBorrowed returns true if this is a predefined schema that should not be freed.
+// Predefined schemas are obtained via GetSchema() and are static.
+func (s *Schema) IsBorrowed() bool {
+	return s.borrowed
+}
+
 // String returns a string representation of the schema
 func (s *Schema) String() string {
 	if s.cSchema == nil {
 		return "Schema{nil}"
 	}
-	return fmt.Sprintf("Schema{name=%q, flags=%s, attributes=%d}",
-		s.Name(), s.Flags(), len(s.Attributes()))
+	borrowed := ""
+	if s.borrowed {
+		borrowed = ", borrowed=true"
+	}
+	return fmt.Sprintf("Schema{name=%q, flags=%s, attributes=%d%s}",
+		s.Name(), s.Flags(), len(s.Attributes()), borrowed)
+}
+
+// GetSchema returns a predefined schema of the given type.
+//
+// This is a direct binding to the C secret_get_schema function.
+// The returned schema is a static/borrowed reference and should NOT be
+// freed - calling Unref() on it is safe but has no effect.
+//
+// Available schema types:
+//   - SchemaTypeNote: For personal passwords/notes (no attributes)
+//   - SchemaTypeCompatNetwork: For network passwords (libgnome-keyring compatible)
+//
+// Example:
+//
+//	// Get the network password schema for migrating from libgnome-keyring
+//	schema := golibsecret.GetSchema(golibsecret.SchemaTypeCompatNetwork)
+//	// No need to call schema.Unref() - it's a predefined schema
+//
+//	attrs := golibsecret.NewAttributes()
+//	attrs.Set("user", "john")
+//	attrs.Set("server", "example.com")
+//	attrs.Set("protocol", "https")
+//	defer attrs.Free()
+//
+//	password, err := golibsecret.PasswordLookupSync(schema, attrs)
+func GetSchema(schemaType SchemaType) *Schema {
+	cSchema := C.secret_get_schema(C.SecretSchemaType(schemaType))
+	if cSchema == nil {
+		return nil
+	}
+
+	// Return a borrowed schema (no finalizer, won't be freed)
+	return &Schema{
+		cSchema:  cSchema,
+		borrowed: true,
+	}
+}
+
+// SchemaNote returns the predefined schema for personal passwords/notes.
+// This is a convenience function equivalent to GetSchema(SchemaTypeNote).
+//
+// Schema name: "org.gnome.keyring.Note"
+// Attributes: none
+//
+// The returned schema is static and should NOT be freed.
+func SchemaNote() *Schema {
+	return GetSchema(SchemaTypeNote)
+}
+
+// SchemaCompatNetwork returns the predefined schema for network passwords.
+// This is a convenience function equivalent to GetSchema(SchemaTypeCompatNetwork).
+//
+// Schema name: "org.gnome.keyring.NetworkPassword"
+//
+// Attributes:
+//   - user: The user name (string)
+//   - domain: The login domain or realm (string)
+//   - object: The object or path (string)
+//   - protocol: The protocol (string like 'http')
+//   - port: The network port (integer)
+//   - server: The hostname or server (string)
+//   - authtype: The authentication type (string)
+//
+// The returned schema is static and should NOT be freed.
+//
+// Example:
+//
+//	schema := golibsecret.SchemaCompatNetwork()
+//
+//	attrs := golibsecret.NewAttributes()
+//	attrs.Set("user", "john")
+//	attrs.Set("server", "example.com")
+//	attrs.Set("protocol", "https")
+//	attrs.Set("port", "443")
+//	defer attrs.Free()
+//
+//	password, err := golibsecret.PasswordLookupSync(schema, attrs)
+func SchemaCompatNetwork() *Schema {
+	return GetSchema(SchemaTypeCompatNetwork)
 }
