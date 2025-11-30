@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	golibsecret "github.com/yourorg/go-libsecret"
+	golibsecret "github.com/lescuer97/go-libsecret"
 )
 
 // Example demonstrates how to define a password schema
