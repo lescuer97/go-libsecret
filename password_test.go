@@ -415,3 +415,176 @@ func TestCollectionConstants(t *testing.T) {
 		t.Errorf("CollectionSession = %q, want %q", CollectionSession, "session")
 	}
 }
+
+// Test SearchFlags
+
+func TestSearchFlagsString(t *testing.T) {
+	tests := []struct {
+		flags    SearchFlags
+		expected string
+	}{
+		{SearchFlagsNone, "NONE"},
+		{SearchFlagsAll, "ALL"},
+		{SearchFlagsUnlock, "UNLOCK"},
+		{SearchFlagsLoadSecrets, "LOAD_SECRETS"},
+		{SearchFlags(999), "FLAGS(999)"},
+	}
+
+	for _, test := range tests {
+		if got := test.flags.String(); got != test.expected {
+			t.Errorf("SearchFlags(%d).String() = %q, want %q", test.flags, got, test.expected)
+		}
+	}
+}
+
+// Test PasswordSearchSync
+
+func TestPasswordSearchSyncNilAttributes(t *testing.T) {
+	schema, err := NewSchema("org.example.Test", SchemaFlagsNone, map[string]SchemaAttributeType{
+		"service": SchemaAttributeString,
+	})
+	if err != nil {
+		t.Fatalf("NewSchema() failed: %v", err)
+	}
+	defer schema.Unref()
+
+	// Test with nil attributes
+	_, err = PasswordSearchSync(schema, nil, SearchFlagsNone)
+	if err == nil {
+		t.Error("PasswordSearchSync with nil attributes expected error, got none")
+	}
+}
+
+func TestPasswordSearchSyncNoResults(t *testing.T) {
+	schema, err := NewSchema("org.example.NonExistent", SchemaFlagsNone, map[string]SchemaAttributeType{
+		"service": SchemaAttributeString,
+	})
+	if err != nil {
+		t.Fatalf("NewSchema() failed: %v", err)
+	}
+	defer schema.Unref()
+
+	attrs := NewAttributes()
+	attrs.Set("service", "nonexistent_service_xyz_12345")
+	defer attrs.Free()
+
+	// Search for something that doesn't exist
+	results, err := PasswordSearchSync(schema, attrs, SearchFlagsAll)
+
+	// May fail if no secret service is running
+	if err != nil {
+		t.Logf("PasswordSearchSync returned error (secret service might not be running): %v", err)
+		return
+	}
+
+	// Should return empty slice, not error
+	if len(results) != 0 {
+		t.Errorf("PasswordSearchSync expected 0 results, got %d", len(results))
+		for _, r := range results {
+			r.Free()
+		}
+	}
+}
+
+func TestPasswordSearch(t *testing.T) {
+	schema, err := NewSchema("org.example.Test", SchemaFlagsNone, map[string]SchemaAttributeType{
+		"service": SchemaAttributeString,
+	})
+	if err != nil {
+		t.Fatalf("NewSchema() failed: %v", err)
+	}
+	defer schema.Unref()
+
+	attrs := NewAttributes()
+	attrs.Set("service", "test_search_service")
+	defer attrs.Free()
+
+	// Test the alias function
+	results, err := PasswordSearch(schema, attrs, SearchFlagsAll)
+	if err != nil {
+		t.Logf("PasswordSearch returned error (secret service might not be running): %v", err)
+		return
+	}
+
+	t.Logf("PasswordSearch found %d results", len(results))
+	for _, r := range results {
+		t.Logf("  - Label: %s, Attrs: %v", r.GetLabel(), r.GetAttributes())
+		r.Free()
+	}
+}
+
+func TestSearchPasswords(t *testing.T) {
+	schema, err := NewSchema("org.example.Test", SchemaFlagsNone, map[string]SchemaAttributeType{
+		"service": SchemaAttributeString,
+	})
+	if err != nil {
+		t.Fatalf("NewSchema() failed: %v", err)
+	}
+	defer schema.Unref()
+
+	// Test the convenience function with a map
+	results, err := SearchPasswords(schema, map[string]string{
+		"service": "test_search_service",
+	}, SearchFlagsAll)
+
+	if err != nil {
+		t.Logf("SearchPasswords returned error (secret service might not be running): %v", err)
+		return
+	}
+
+	t.Logf("SearchPasswords found %d results", len(results))
+	for _, r := range results {
+		r.Free()
+	}
+}
+
+func TestSearchPasswordsEmptyMap(t *testing.T) {
+	schema, err := NewSchema("org.example.Test", SchemaFlagsNone, map[string]SchemaAttributeType{
+		"service": SchemaAttributeString,
+	})
+	if err != nil {
+		t.Fatalf("NewSchema() failed: %v", err)
+	}
+	defer schema.Unref()
+
+	// Test with empty map
+	_, err = SearchPasswords(schema, map[string]string{}, SearchFlagsAll)
+	if err == nil {
+		t.Error("SearchPasswords with empty map expected error, got none")
+	}
+}
+
+func TestSearchResultMethods(t *testing.T) {
+	// Test with nil SearchResult
+	r := &SearchResult{cRetrievable: nil}
+
+	if attrs := r.GetAttributes(); attrs != nil {
+		t.Error("GetAttributes on nil result should return nil")
+	}
+
+	if label := r.GetLabel(); label != "" {
+		t.Error("GetLabel on nil result should return empty string")
+	}
+
+	if created := r.GetCreated(); created != 0 {
+		t.Error("GetCreated on nil result should return 0")
+	}
+
+	if modified := r.GetModified(); modified != 0 {
+		t.Error("GetModified on nil result should return 0")
+	}
+
+	_, err := r.RetrieveSecret()
+	if err == nil {
+		t.Error("RetrieveSecret on nil result should return error")
+	}
+
+	// String should not panic
+	str := r.String()
+	if str != "SearchResult{nil}" {
+		t.Errorf("String on nil result = %q, want %q", str, "SearchResult{nil}")
+	}
+
+	// Free should not panic
+	r.Free()
+}
