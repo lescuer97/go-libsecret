@@ -36,8 +36,8 @@ func NewAttributes() *Attributes {
 	hashTable := C.g_hash_table_new_full(
 		C.GHashFunc(C.g_str_hash),
 		C.GEqualFunc(C.g_str_equal),
-		C.GDestroyNotify(C.g_free),    // Free key strings
-		C.GDestroyNotify(C.g_free),    // Free value strings
+		C.GDestroyNotify(C.g_free), // Free key strings
+		C.GDestroyNotify(C.g_free), // Free value strings
 	)
 
 	attributes := &Attributes{
@@ -205,14 +205,14 @@ func (a *Attributes) Keys() []string {
 	}
 
 	keys := make([]string, 0)
-	
+
 	// Create a GHashTableIter for iteration
 	var iter C.GHashTableIter
 	C.g_hash_table_iter_init(&iter, a.cAttributes)
-	
+
 	var key, value C.gpointer
 	var cKeyString *C.gchar
-	
+
 	// Iterate through the hash table
 	for C.g_hash_table_iter_next(&iter, &key, &value) != 0 {
 		if key != nil {
@@ -266,10 +266,10 @@ func (a *Attributes) ToMap() map[string]string {
 	result := make(map[string]string)
 	var iter C.GHashTableIter
 	C.g_hash_table_iter_init(&iter, a.cAttributes)
-	
+
 	var key, value C.gpointer
 	var cKeyString, cValueString *C.gchar
-	
+
 	for C.g_hash_table_iter_next(&iter, &key, &value) != 0 {
 		if key != nil && value != nil {
 			cKeyString = (*C.gchar)(key)
@@ -311,7 +311,7 @@ func (a *Attributes) Free() {
 // GetGHashTable returns the underlying C GHashTable pointer.
 // This is used internally by other libsecret functions.
 //
-// Warning: This gives direct access to the C hash table. 
+// Warning: This gives direct access to the C hash table.
 // Only use this if you know what you're doing.
 func (a *Attributes) GetGHashTable() *C.GHashTable {
 	return a.cAttributes
@@ -324,7 +324,7 @@ func (a *Attributes) String() string {
 		return "Attributes{nil}"
 	}
 
-	return fmt.Sprintf("Attributes{count=%d, keys=%v}", 
+	return fmt.Sprintf("Attributes{count=%d, keys=%v}",
 		a.Len(), a.Keys())
 }
 
@@ -351,6 +351,91 @@ func (a *Attributes) Equals(other *Attributes) bool {
 	return true
 }
 
+// Validate checks if attributes are valid according to the provided schema.
+// This is a direct binding to the C secret_attributes_validate function.
+//
+// It verifies:
+//   - Schema name consistency (if xdg:schema attribute is present)
+//   - Attribute names are defined in the schema
+//   - Attribute values can be parsed according to their schema types
+//
+// Returns nil if validation succeeds, or an error with details about what failed.
+//
+// Example:
+//
+//	schema, _ := golibsecret.NewSchema("org.example.Password", golibsecret.SchemaFlagsNone, map[string]golibsecret.SchemaAttributeType{
+//	    "username": golibsecret.SchemaAttributeString,
+//	    "port":     golibsecret.SchemaAttributeInteger,
+//	    "ssl":      golibsecret.SchemaAttributeBoolean,
+//	})
+//
+//	attrs := golibsecret.NewAttributes()
+//	attrs.Set("username", "john")
+//	attrs.Set("port", "8080")
+//	attrs.Set("ssl", "true")
+//
+//	if err := attrs.Validate(schema); err != nil {
+//	    log.Fatal("Invalid attributes:", err)
+//	}
+func (a *Attributes) Validate(schema *Schema) error {
+	if a.cAttributes == nil {
+		return fmt.Errorf("attributes is nil")
+	}
+
+	if schema == nil || schema.cSchema == nil {
+		return fmt.Errorf("schema is nil")
+	}
+
+	var cError *C.GError
+
+	result := C.secret_attributes_validate(
+		schema.cSchema,
+		a.cAttributes,
+		&cError,
+	)
+
+	if result == 0 {
+		// Validation failed
+		if cError != nil {
+			errMsg := C.GoString(cError.message)
+			C.g_error_free(cError)
+			return fmt.Errorf("attribute validation failed: %s", errMsg)
+		}
+		return fmt.Errorf("attribute validation failed")
+	}
+
+	return nil
+}
+
+// ValidateAttributes validates that a set of attributes conforms to the given schema
+// using the underlying C secret_attributes_validate function.
+//
+// This is a convenience function that wraps Attributes.Validate().
+//
+// It verifies:
+//   - Schema name consistency (if xdg:schema attribute is present)
+//   - Attribute names are defined in the schema
+//   - Attribute values can be parsed according to their schema types
+//
+// Returns nil if validation succeeds, or an error with details about what failed.
+//
+// Example:
+//
+//	err := golibsecret.ValidateAttributes(schema, attrs)
+//	if err != nil {
+//	    log.Fatal("Invalid attributes:", err)
+//	}
+func ValidateAttributes(schema *Schema, attrs *Attributes) error {
+	if schema == nil {
+		return fmt.Errorf("schema cannot be nil")
+	}
+	if attrs == nil {
+		return fmt.Errorf("attributes cannot be nil")
+	}
+
+	return attrs.Validate(schema)
+}
+
 // Clone creates a copy of the attributes collection.
 // The returned copy can be modified independently.
 //
@@ -358,10 +443,10 @@ func (a *Attributes) Equals(other *Attributes) bool {
 //
 //	original := golibsecret.NewAttributes()
 //	original.Set("key", "value")
-//	
+//
 //	clone := original.Clone()
 //	clone.Set("new_key", "new_value")
-//	
+//
 //	fmt.Println("Original count:", original.Len())
 //	fmt.Println("Clone count:", clone.Len())
 func (a *Attributes) Clone() (*Attributes, error) {
@@ -373,18 +458,18 @@ func (a *Attributes) Clone() (*Attributes, error) {
 	clone := NewAttributes()
 	var iter C.GHashTableIter
 	C.g_hash_table_iter_init(&iter, a.cAttributes)
-	
+
 	var key, value C.gpointer
 	var cKeyString, cValueString *C.gchar
-	
+
 	for C.g_hash_table_iter_next(&iter, &key, &value) != 0 {
 		if key != nil && value != nil {
 			cKeyString = (*C.gchar)(key)
 			cValueString = (*C.gchar)(value)
-			
+
 			cKey := C.CString(C.GoString(cKeyString))
 			cValue := C.CString(C.GoString(cValueString))
-			
+
 			C.g_hash_table_insert(clone.cAttributes, C.gpointer(cKey), C.gpointer(cValue))
 		}
 	}

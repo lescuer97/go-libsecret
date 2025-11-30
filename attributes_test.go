@@ -432,6 +432,182 @@ func TestAttributeBuilderFree(t *testing.T) {
 	}
 }
 
+func TestAttributesValidate(t *testing.T) {
+	schema, err := NewSchema("org.example.Schema", SchemaFlagsNone, map[string]SchemaAttributeType{
+		"username": SchemaAttributeString,
+		"port":     SchemaAttributeInteger,
+		"ssl":      SchemaAttributeBoolean,
+	})
+	if err != nil {
+		t.Fatalf("NewSchema() failed: %v", err)
+	}
+	defer schema.Unref()
+
+	tests := []struct {
+		name    string
+		attrs   *Attributes
+		wantErr bool
+	}{
+		{
+			name: "valid attributes",
+			attrs: func() *Attributes {
+				a := NewAttributes()
+				a.Set("username", "john")
+				a.Set("port", "8080")
+				a.Set("ssl", "true")
+				return a
+			}(),
+			wantErr: false,
+		},
+		{
+			name: "extra attribute not in schema",
+			attrs: func() *Attributes {
+				a := NewAttributes()
+				a.Set("username", "john")
+				a.Set("port", "8080")
+				a.Set("ssl", "true")
+				a.Set("extra", "value")
+				return a
+			}(),
+			wantErr: true,
+		},
+		{
+			name: "invalid boolean value",
+			attrs: func() *Attributes {
+				a := NewAttributes()
+				a.Set("username", "john")
+				a.Set("port", "8080")
+				a.Set("ssl", "yes") // Should be "true" or "false"
+				return a
+			}(),
+			wantErr: true,
+		},
+		{
+			name: "invalid integer value",
+			attrs: func() *Attributes {
+				a := NewAttributes()
+				a.Set("username", "john")
+				a.Set("port", "not-a-number")
+				a.Set("ssl", "true")
+				return a
+			}(),
+			wantErr: true,
+		},
+		{
+			name: "partial attributes (valid with C binding)",
+			attrs: func() *Attributes {
+				a := NewAttributes()
+				a.Set("username", "john")
+				// Note: C binding does NOT require all schema attributes to be present
+				return a
+			}(),
+			wantErr: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.attrs != nil {
+				defer test.attrs.Free()
+			}
+
+			err := test.attrs.Validate(schema)
+
+			if test.wantErr {
+				if err == nil {
+					t.Errorf("Validate() expected error, got none")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Validate() unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateAttributes(t *testing.T) {
+	schema, err := NewSchema("org.example.Schema", SchemaFlagsNone, map[string]SchemaAttributeType{
+		"username": SchemaAttributeString,
+		"port":     SchemaAttributeInteger,
+	})
+	if err != nil {
+		t.Fatalf("NewSchema() failed: %v", err)
+	}
+	defer schema.Unref()
+
+	t.Run("nil schema", func(t *testing.T) {
+		attrs := NewAttributes()
+		attrs.Set("username", "john")
+		defer attrs.Free()
+
+		err := ValidateAttributes(nil, attrs)
+		if err == nil {
+			t.Error("ValidateAttributes(nil, attrs) expected error, got none")
+		}
+	})
+
+	t.Run("nil attributes", func(t *testing.T) {
+		err := ValidateAttributes(schema, nil)
+		if err == nil {
+			t.Error("ValidateAttributes(schema, nil) expected error, got none")
+		}
+	})
+
+	t.Run("valid attributes", func(t *testing.T) {
+		attrs := NewAttributes()
+		attrs.Set("username", "john")
+		attrs.Set("port", "8080")
+		defer attrs.Free()
+
+		err := ValidateAttributes(schema, attrs)
+		if err != nil {
+			t.Errorf("ValidateAttributes() unexpected error: %v", err)
+		}
+	})
+
+	t.Run("invalid attribute type", func(t *testing.T) {
+		attrs := NewAttributes()
+		attrs.Set("username", "john")
+		attrs.Set("port", "not-a-number")
+		defer attrs.Free()
+
+		err := ValidateAttributes(schema, attrs)
+		if err == nil {
+			t.Error("ValidateAttributes() expected error for invalid type, got none")
+		}
+	})
+}
+
+func TestAttributesValidateNilAttributes(t *testing.T) {
+	schema, err := NewSchema("org.example.Schema", SchemaFlagsNone, map[string]SchemaAttributeType{
+		"username": SchemaAttributeString,
+	})
+	if err != nil {
+		t.Fatalf("NewSchema() failed: %v", err)
+	}
+	defer schema.Unref()
+
+	// Create an attributes object and then free it to simulate nil state
+	attrs := &Attributes{cAttributes: nil}
+
+	err = attrs.Validate(schema)
+	if err == nil {
+		t.Error("Validate() on nil attributes expected error, got none")
+	}
+}
+
+func TestAttributesValidateNilSchema(t *testing.T) {
+	attrs := NewAttributes()
+	attrs.Set("username", "john")
+	defer attrs.Free()
+
+	err := attrs.Validate(nil)
+	if err == nil {
+		t.Error("Validate(nil) expected error, got none")
+	}
+}
+
 func BenchmarkBuildAttributes(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		attrs, _ := BuildAttributes(
