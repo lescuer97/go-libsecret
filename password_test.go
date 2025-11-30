@@ -588,3 +588,110 @@ func TestSearchResultMethods(t *testing.T) {
 	// Free should not panic
 	r.Free()
 }
+
+// Test PasswordClearSync
+
+func TestPasswordClearSyncNilAttributes(t *testing.T) {
+	schema, err := NewSchema("org.example.Test", SchemaFlagsNone, map[string]SchemaAttributeType{
+		"service": SchemaAttributeString,
+	})
+	if err != nil {
+		t.Fatalf("NewSchema() failed: %v", err)
+	}
+	defer schema.Unref()
+
+	// Test with nil attributes
+	_, err = PasswordClearSync(schema, nil)
+	if err == nil {
+		t.Error("PasswordClearSync with nil attributes expected error, got none")
+	}
+}
+
+func TestPasswordClearSyncNonExistent(t *testing.T) {
+	schema, err := NewSchema("org.example.NonExistent", SchemaFlagsNone, map[string]SchemaAttributeType{
+		"service": SchemaAttributeString,
+	})
+	if err != nil {
+		t.Fatalf("NewSchema() failed: %v", err)
+	}
+	defer schema.Unref()
+
+	attrs := NewAttributes()
+	attrs.Set("service", "nonexistent_service_xyz_clear_12345")
+	defer attrs.Free()
+
+	// Try to clear something that doesn't exist
+	removed, err := PasswordClearSync(schema, attrs)
+
+	// May fail if no secret service is running
+	if err != nil {
+		t.Logf("PasswordClearSync returned error (secret service might not be running): %v", err)
+		return
+	}
+
+	// Should return false (nothing removed)
+	if removed {
+		t.Error("PasswordClearSync expected false for non-existent password, got true")
+	}
+}
+
+func TestPasswordClear(t *testing.T) {
+	schema, err := NewSchema("org.example.Test", SchemaFlagsNone, map[string]SchemaAttributeType{
+		"service": SchemaAttributeString,
+	})
+	if err != nil {
+		t.Fatalf("NewSchema() failed: %v", err)
+	}
+	defer schema.Unref()
+
+	attrs := NewAttributes()
+	attrs.Set("service", "test_clear_service")
+	defer attrs.Free()
+
+	// Test the alias function
+	removed, err := PasswordClear(schema, attrs)
+	if err != nil {
+		t.Logf("PasswordClear returned error (secret service might not be running): %v", err)
+		return
+	}
+
+	t.Logf("PasswordClear removed: %v", removed)
+}
+
+func TestClearPassword(t *testing.T) {
+	schema, err := NewSchema("org.example.Test", SchemaFlagsNone, map[string]SchemaAttributeType{
+		"service": SchemaAttributeString,
+	})
+	if err != nil {
+		t.Fatalf("NewSchema() failed: %v", err)
+	}
+	defer schema.Unref()
+
+	// Test the convenience function with a map
+	removed, err := ClearPassword(schema, map[string]string{
+		"service": "test_clear_service",
+	})
+
+	if err != nil {
+		t.Logf("ClearPassword returned error (secret service might not be running): %v", err)
+		return
+	}
+
+	t.Logf("ClearPassword removed: %v", removed)
+}
+
+func TestClearPasswordEmptyMap(t *testing.T) {
+	schema, err := NewSchema("org.example.Test", SchemaFlagsNone, map[string]SchemaAttributeType{
+		"service": SchemaAttributeString,
+	})
+	if err != nil {
+		t.Fatalf("NewSchema() failed: %v", err)
+	}
+	defer schema.Unref()
+
+	// Test with empty map
+	_, err = ClearPassword(schema, map[string]string{})
+	if err == nil {
+		t.Error("ClearPassword with empty map expected error, got none")
+	}
+}

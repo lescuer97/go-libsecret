@@ -690,3 +690,110 @@ func SearchPasswords(schema *Schema, attributeMap map[string]string, flags Searc
 
 	return PasswordSearchSync(schema, attrs, flags)
 }
+
+// PasswordClearSync removes unlocked matching passwords from the secret service synchronously.
+//
+// This is a direct binding to the C secret_password_clearv_sync function.
+// It removes all unlocked secrets that match the given schema and attributes.
+//
+// Parameters:
+//   - schema: The schema that defines the expected attribute types. Can be nil
+//     to match any schema.
+//   - attributes: Key-value pairs used to identify the secrets to remove.
+//     All unlocked items matching these attributes will be deleted.
+//
+// Returns:
+//   - true if any passwords were removed, false if none matched
+//   - Error if the operation failed
+//
+// Note: Only unlocked items are removed. Locked items that match will not be deleted.
+//
+// Note: This method blocks until the operation completes. Do not use in
+// UI threads or performance-critical code paths.
+//
+// Example:
+//
+//	schema, _ := golibsecret.NewSchema("org.example.Password", golibsecret.SchemaFlagsNone, map[string]golibsecret.SchemaAttributeType{
+//	    "username": golibsecret.SchemaAttributeString,
+//	    "service":  golibsecret.SchemaAttributeString,
+//	})
+//	defer schema.Unref()
+//
+//	attrs := golibsecret.NewAttributes()
+//	attrs.Set("username", "john.doe")
+//	attrs.Set("service", "myapp")
+//	defer attrs.Free()
+//
+//	removed, err := golibsecret.PasswordClearSync(schema, attrs)
+//	if err != nil {
+//	    log.Fatal("Clear failed:", err)
+//	}
+//	if removed {
+//	    fmt.Println("Password was removed")
+//	} else {
+//	    fmt.Println("No matching password found")
+//	}
+func PasswordClearSync(schema *Schema, attributes *Attributes) (bool, error) {
+	if attributes == nil || attributes.cAttributes == nil {
+		return false, fmt.Errorf("attributes cannot be nil")
+	}
+
+	var cSchema *C.SecretSchema
+	if schema != nil {
+		cSchema = schema.cSchema
+	}
+
+	var cError *C.GError
+
+	// Call the C function
+	result := C.secret_password_clearv_sync(
+		cSchema,
+		attributes.cAttributes,
+		nil, // GCancellable - NULL for synchronous operation
+		&cError,
+	)
+
+	// Check for errors
+	if cError != nil {
+		errMsg := C.GoString(cError.message)
+		C.g_error_free(cError)
+		return false, fmt.Errorf("password clear failed: %s", errMsg)
+	}
+
+	return result != 0, nil
+}
+
+// PasswordClear is an alias for PasswordClearSync for convenience.
+// See PasswordClearSync for full documentation.
+func PasswordClear(schema *Schema, attributes *Attributes) (bool, error) {
+	return PasswordClearSync(schema, attributes)
+}
+
+// ClearPassword removes a password using a map of attributes.
+// This is a convenience function that creates Attributes from the map internally.
+//
+// Example:
+//
+//	schema, _ := golibsecret.NewSchema("org.example.Password", golibsecret.SchemaFlagsNone, map[string]golibsecret.SchemaAttributeType{
+//	    "username": golibsecret.SchemaAttributeString,
+//	})
+//
+//	removed, err := golibsecret.ClearPassword(schema, map[string]string{
+//	    "username": "john.doe",
+//	})
+//	if removed {
+//	    fmt.Println("Password was removed")
+//	}
+func ClearPassword(schema *Schema, attributeMap map[string]string) (bool, error) {
+	if len(attributeMap) == 0 {
+		return false, fmt.Errorf("attributes map cannot be empty")
+	}
+
+	attrs, err := AttributesFromMap(attributeMap)
+	if err != nil {
+		return false, fmt.Errorf("failed to create attributes: %w", err)
+	}
+	defer attrs.Free()
+
+	return PasswordClearSync(schema, attrs)
+}
